@@ -1,0 +1,739 @@
+---
+title: "2016年美帝总统竞选捐款分析（纽约州）"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r 安装包的载入, echo=FALSE}
+#install.packages("GGally")
+#install.packages("tidyr")
+
+library(dplyr)
+library(ggplot2)
+#detach("package:dplyr")
+#library(GGally)
+#detach("package:GGally")
+library(tidyr)
+```
+
+### 前期准备
+#### 数据集选择
+完整数据载入耗时过长，目测并不利于后续分析，所以计划选择某州数据进行初步分析。经了解，选举人票数可以体现人口数多少，各州数据包大小基本也符合该趋势。从传统来看，民主党（希拉里）票仓体量较大的州：加州CA、纽约NY、伊利诺伊州IL，共和党（特朗普）：德州TX。经测试，加州数据载入大约需要1分钟，为保证高效，此次首选同样较有明确倾向性（民主党）的NY数据集。  
+   
+```{r 载入数据, eval=c(13), echo=FALSE}
+
+getwd()
+setwd('/Users/feihong/Udacity/Chap_3/探索项目3')
+
+#所有的数据集都比列名多一列，相当于最后一列没有列名称，理论上Excel重新保存一下就能解决问题，但是数据集又太大不好打开，尴尬
+#3.7M秒处理
+data_DE <- read.csv('P00000001-DE.csv',header = TRUE, row.names = NULL) 
+#250M大约一分钟
+data_CA <- read.csv('P00000001-CA.csv',header = TRUE, row.names = NULL) 
+#1.46G需要将近10分钟
+data_ALL <- read.csv('P00000001-ALL.csv',header = TRUE, row.names = NULL) 
+
+data_NY <- read.csv('P00000001-NY.csv',header = TRUE) #128M数据载入约半分钟
+#?read.csv
+#eval控制是否执行，echo控制是否显示代码
+order(summary(data_ALL$cand_id))
+#?summary
+```    
+    
+#### 关于数据字典
+缩写    |内容    |数据类型  
+————————|————————|————————    
+CMTE_ID    |委员会ID|9位字母数字S  
+CAND_ID 	 |候选人ID|9位字母数字S  
+CAND_NM 	 |候选人姓名|String  
+CONTBR_NM  |捐款人姓名|String  
+CONTBR_CITY|捐款人城市|String  
+CONTBR_ST  |捐款人州  |String  
+CONTBR_ZIP |捐款人邮编|String    
+CONTBR_EMPLOYER  |捐款人公司|String  
+CONTBR_OCCUPATION|捐款人职业|String  
+CONTB_RECEIPT_AMT|捐款数    |Numeric  
+CONTB_RECEIPT_DT |捐款日期  |Date  
+RECEIPT_DESC     |捐款备注  |String  
+MEMO_CD    |备忘标记    |X表示有备忘（事实并不准确）  
+MEMO_TEXT  |备忘内容    |标签内容S  
+FORM_TP    |类型        |X表示有备忘S  
+FILE_NUM   |文件编码    |唯一Numeric  
+TRAN_ID	   |电子文件编码|S  
+ELECTION_TP|捐款类型年份|代码见说明S  
+   
+#### 捐款类型说明
+P = Primary 初选 主要选代表，在六月结束   
+G = General 普选   
+O = Other   
+C = Convention nation concention 7、8月，全国代表大会，确定本党候选人   
+R = Runoff 决选   
+S = Special（本身可能包括P，G，R三个阶段）  
+E = Recount 重新计票阶段   
+参考链接：https://www.fec.gov/help-candidates-and-committees/candidate-taking-receipts/contribution-limits/
+      
+
+##### 纽约数据集概况   
+```{r 数据集概况, eval=c(1), echo=FALSE}
+str(data_NY)
+summary(data_NY$cand_nm)
+```
+
+纽约数据集中一共约65万条记录，涉及25名候选人，不包含候选人党派信息
+   
+##### 候选人情况分析   
+为保险起见，参考全国数据（744万+）选择最热门人选：   
+Clinton, Hillary Rodham（民主党）350万+   
+Sanders, Bernard桑德斯(登记民主党，自称民主社会党)206万+   
+Trump, Donald J. 特朗普（共和党）78万   
+Cruz, Rafael Edward 'Ted'（共和党）5.4日退选，约55.8万   
+Carson, Benjamin S.(共和党) 3月退选 约25万   
+Rubio, Marco（共和党）古巴裔，3.15在佛罗里达州败给特朗普后退选，10万+   
+Paul, Rand（共和党）2.3号退选，3.2万+   
+Bush, Jeb（共和党）6.15号退选，约3万   
+Fiorina, Carly（共和党），约2.8万   
+以上覆盖了约98.8%的数据
+   
+##### 捐款者职业整理
+```{r 职业分析, eval=FALSE, echo=FALSE}
+summary(data_NY$contbr_occupation)
+summary(data_ALL$contbr_employer)
+```
+64万条捐款数据对应1.7万种职业，略有些庞杂。起初考虑根据生活经验将一些职业类型合并，但是后期在分析的过程中发现在没有经过严密论证前贸然合并并不是个好选择，所以只合并数量较多的、显然相同的职业名：  
+INFORMATION REQUESTED：INFORMATION REQUESTED PER BEST EFFORTS；  
+SELF-EMPLOYED：SELF EMPLOYED, SELF；   
+CEO：CHIEF EXECUTIVE OFFICER，C.E.O.；   
+
+```{r 相似职业名称替换, echo=FALSE}
+
+data_NY$contbr_occupation <- 
+  sub("INFORMATION REQUESTED PER BEST EFFORTS","INFORMATION REQUESTED",
+      data_NY$contbr_occupation)
+data_NY$contbr_occupation <- 
+  sub("SELF EMPLOYED","SELF-EMPLOYED",
+      data_NY$contbr_occupation)
+data_NY$contbr_occupation <- 
+  sub("SELF-EMPLOYED-EMPLOYED","SELF-EMPLOYED",
+      data_NY$contbr_occupation)
+data_NY$contbr_occupation <- 
+  sub("CHIEF EXECUTIVE OFFICER","CEO",
+      data_NY$contbr_occupation)
+data_NY$contbr_occupation <- 
+  sub("C.E.O.","CEO",
+      data_NY$contbr_occupation)
+
+#转换后occupation列属性变为char,重新改为factor
+data_NY$contbr_occupation <- as.factor(data_NY$contbr_occupation)
+summary(data_NY$contbr_occupation)
+
+```
+这项属性似乎是由捐款人自主填写，相同的职业会有重复出现，同时夹杂了大量的类似职业。除非花大力气整理捐款人职业这一栏，似乎很难精确分析出职业的和捐款情况之间的关系。   
+
+
+##### 候选人党派信息
+当前数据不包括候选人所属党派信息，根据候选人情况分析部分的功课，添加候选人党派信息：Republican or Democrat   
+因为已列出党派的人员已经涵盖了98%+的捐款记录，所以此次分析排除无党派信息的人员捐款情况
+
+```{r 添加候选人党派信息, echo=FALSE}
+#summary(data_NY$cand_nm)
+
+#参考https://blog.csdn.net/wltom1985/article/details/54973811 关于dplyr包中case_when代码
+
+data_NY$cand_party <- case_when(
+  data_NY$cand_nm %in% 
+    c("Clinton, Hillary Rodham","Sanders, Bernard")~"Democrat",
+  data_NY$cand_nm %in% 
+    c("Trump, Donald J.","Cruz, Rafael Edward 'Ted'","Carson, Benjamin S.",
+      "Rubio, Marco","Paul, Rand","Bush, Jeb","Fiorina, Carly")~"Republican",
+  TRUE ~ "")
+
+data_NY$cand_party <- as.factor(data_NY$cand_party)
+summary(data_NY$cand_party)
+#summary(!is.na(data_NY$cand_party)) 不是为空，而是""
+#summary(data_NY$cand_party!="")
+subset_NY <- subset(data_NY, cand_party!="")
+#保留有用的字段
+subset_NY <- 
+  subset_NY[c('cand_nm','contbr_nm','contbr_city','contbr_employer',
+              'contbr_occupation','contb_receipt_amt','contb_receipt_dt',
+              'election_tp','cand_party')]
+
+```
+     
+### 单变量图像    
+
+##### 捐款数分析    
+
+```{r 捐款数分析, echo=FALSE}
+summary(data_NY$contb_receipt_amt)
+summary(data_NY$contb_receipt_amt>0)
+#只取捐款数大于0的子集
+subset_NY <- subset(subset_NY, contb_receipt_amt>0)
+```
+     
+统计捐款数发现，数据集中还有8K5+条捐款为负的记录，经查证该部分数据值为退款情况，在此次分析中排除这类数据。   
+   
+```{r, echo=FALSE}
+summary(subset_NY$contb_receipt_amt)
+summary(subset_NY$contb_receipt_amt>=10000)
+```
+
+去掉退款部分数据后，观察发现：最高捐款金额已经超过1千万，但从均值来看为269刀，75%的捐款不超过100刀，推测超大额捐款记录并不多。统计后发现，在63.5万条记录中，只有30笔捐款超过1万刀。
+
+```{r, echo=FALSE}
+quantile(subset_NY$contb_receipt_amt,0.99)
+quantile(subset_NY$contb_receipt_amt,0.95)
+```
+
+99%的捐款数额在2700刀以下，95%的捐款数额在500刀以下
+
+```{r, echo=FALSE}
+#捐款数分布情况
+qplot(x=contb_receipt_amt, data = subset_NY) +
+  xlim(0,quantile(subset_NY$contb_receipt_amt,0.95))
+```
+
+从直方图来看，捐款主要集中在100刀以下，少于50刀的更明显些。考虑通过坐标轴变换的方式再进行观察
+
+```{r, echo=FALSE}
+#对坐标轴进行对数变换
+ggplot(aes(x=contb_receipt_amt+1), data = subset_NY) + 
+  geom_histogram(bins = 15) +
+  scale_x_log10(breaks=10^(0:4), limits=c(1,10001))
+```
+
+通过对上一个图像进行对数变换，发现捐款主要集中在10~100刀这个区间。为进一步观察，考虑放大这一区间，并合理猜测在若干整数点的位置有可能会出现集中（人们可能偏爱捐10、25、50这样较为整的数）
+
+```{r, echo=FALSE}
+#限定观察范围，并标明若干可能出现高峰的点
+ggplot(aes(x=contb_receipt_amt), data = subset_NY) + 
+  geom_histogram() +
+  scale_x_continuous(breaks=c(15,20,25,50,75,100),limits=c(9,100))
+```
+
+如之前猜测，捐款多数集中在10刀~100刀,且这期间密级集中在：15刀，20刀，25刀，50刀，75刀这几个数字上
+
+```{r 大额捐款,  echo=FALSE}
+their_precious <- subset(subset_NY, contb_receipt_amt>=10000)
+```
+从63.56万条捐款记录筛选出超过1万刀的大额捐款共30笔，有意思的是，数额排名前23的全部是希拉里基金会的捐款，几乎全部超过10万刀，最大一笔超过了1000万刀。剩下的7笔捐款均不超过1.1万，最终的获胜者特朗普仅获得其中1笔捐款。  
+关于捐款所属竞选阶段，在整个数据集中，捐款竞选阶段为空的概率约为万分之9，但是大额捐款部分该字段未填概率约为53.3%，这其中的原因不得而知。   
+
+##### 两党获得的捐款笔数
+```{r 两党分别获得的捐款笔数, echo=FALSE}
+qplot(x=cand_party, data = subset_NY)
+```
+
+民主党捐款记录有57w+条，共和党只有不到7万条。   
+
+##### 各候选人获得捐款笔数
+```{r 候选人获得捐款分析, echo=FALSE}
+#summary(subset_NY$cand_nm)
+#按候选人获得捐款笔数倒序排列，这里引入了rep函数
+#参考链接http://blog.sina.com.cn/s/blog_4a238ec20101teyg.html
+
+ggplot(aes(x=reorder(cand_nm,rep(1,length(cand_nm)),sum)), data = subset_NY) +
+  geom_bar() +
+  labs(x="Candidate", y="Receipt Amount Counts") +
+  coord_flip()
+```
+     
+希拉里获得近40万笔捐款，桑德斯次之获得17.3万+笔，最终获胜者特朗普仅获得不到3.6万笔捐款。     
+
+##### 捐款来源地区分析    
+```{r 捐款来源地区, echo=FALSE}
+summary(subset_NY$contbr_city)
+
+amtByCity <- subset_NY %>%
+  group_by(contbr_city) %>%
+  summarise(mean_amt = mean(contb_receipt_amt),
+            median_amt = median(contb_receipt_amt),
+            min_amt = min(contb_receipt_amt),
+            max_amt = max(contb_receipt_amt),
+            n = n())
+
+ggplot(aes(x=reorder(contbr_city,n), y=n), data = subset(amtByCity, n>2500)) +
+  geom_bar(stat = "identity") +
+  labs(x="City", y="Receipt Amount Counts") +
+  coord_flip()
+```
+     
+经查，纽约州主要城市：New York City, Buffalo, Rochester, Yonkers, Syracuse, Albany(州首府)。
+纽约市主要县：New York(曼哈顿), Brooklyn, Bronx, Staten Island, Queens   
+这与捐款集中的地区是基本吻合的。        
+
+##### 捐款人职业分析   
+```{r 捐款人职业, echo=FALSE}
+summary(subset_NY$contbr_occupation)
+
+#排除若干笔来自希拉里基金会的非个人捐款
+amtByOccupation <- subset(subset_NY,contb_receipt_amt<20000 ) %>%
+  group_by(contbr_occupation) %>%
+  summarise(mean_amt = mean(contb_receipt_amt),
+            median_amt = median(contb_receipt_amt),
+            min_amt = min(contb_receipt_amt),
+            max_amt = max(contb_receipt_amt),
+            sum_amt = sum(contb_receipt_amt),
+            n = n())
+
+ggplot(aes(x=reorder(contbr_occupation,n), y=n), 
+       data = subset(amtByOccupation, n>3000)) +
+  geom_bar(stat = "identity") +
+  labs(x="Occupation", y="Receipt Amount Counts") +
+  coord_flip()
+```
+     
+图中展现了捐款人职业的分布情况，退休人士体现出来了强烈的捐款意愿，非雇佣状态的人紧随其后，由此猜测所谓的Not employed很可能并不完全是一般概念下生活失意的失业人士（真·失业人士怎么会有闲钱捐款给总统竞选啊）
+
+##### 捐款集中的时间阶段
+```{r 捐款时间段分析, echo=FALSE}
+summary(subset_NY$election_tp)
+
+qplot(x=election_tp, data = subset_NY)
+```
+     
+在63.5万条记录中，约37万条捐款集中在初选阶段，26.5万条记录集中在普选阶段。捐款看起来是持续在整个竞选过程之中的。   
+其中P2015的记录猜测有可能是填写错误造成的，还有568条记录未填写时间段，原因未知      
+
+### 单变量分析  
+##### 数据集分析概况   
+此次选择纽约粥捐款数据集，原始数据集中共有649469条记录，18列属性。保留其中较重要的8列属性：候选人姓名，捐款人姓名，捐款人城市，捐款人公司，捐款人职业，捐款额，捐款日期，捐款阶段。额外补充候选人党派信息，共9列属性值。根据候选人收到的捐款记录，保留数据集中热门总统候选人相关数据（约98.8%），排除数据集中捐款退款记录，最终保留635682条记录。   
+     
+单变量观察结果：      
+- 纽约州明显倾向于民主党：民主党捐款记录有57w+条，共和党只有不到7万条；   
+- 捐款较为活跃的城市与纽约州的主要城市列表基本吻合，严格来讲，纽约州的主要捐款还是集中在纽约市的主要几个区；    
+- 捐款人职业粒度较小，且有相同职业的不同填写方式，并不利于聚类分析；   
+- 捐款额的中位数为27，75%的捐款小于100美元，95%的捐款小于500美元，最高捐款额为12777705.6美元
+- 捐款集中在初选和普选两段时间内：约37万条捐款产生在初选阶段，26.5万条记录产生在普选阶段；   
+
+##### 本数据集分析的核心   
+总统竞选捐款情况的核心数据应该是捐款额，候选人所属党派和候选人，三者依次递减。理想的效果是能根据捐款情况分析每个州的党派倾向、候选人倾向，结合美国总统大选的制度，预测出最终的优胜者。   
+
+##### 是否在数据集中加入了新变量   
+是的，根据美国总统选举制度，每个党派各选出一名候选人后，总统竞选才算正式开始。党派信息是很重要的一个属性值。后续可以按党派分析不同州、不同职业的党派倾向。    
+
+##### 目前为止发现哪些不寻常的数据情况
+仅有30笔捐款超过1万刀，按金额排序，前23名几乎全部超过10w刀（最小一笔为9.74w），最大一笔超过千万级，且这23大额捐款全部来自于希拉里某基金会捐向希拉里。其它7笔捐款均不超过1.1w刀。后期分析在计算某些均值时，需要酌情考虑排除这23笔捐款的影响。事实上我并没有想清楚是否应该排除这些数据，一方面他们可能严重影响涉及平均值的分析，另一方面这说明希拉里的团队非常非常非常有钱（虽然最后希拉里并未获胜），不能忽视这一因素对竞选的影响。    
+
+##### 在下一阶段可以从尝试哪些方面分析数据集   
+- 不同地区和捐款情况之间的关系   
+- 不同职业和捐款之间的关系   
+- 不同地区对党派的倾向   
+- 不同候选人获得捐款的情况   
+- 普选阶段（G2016）是不是只有希拉里和特朗普了（我对选举制度实在不很了解）   
+- 不同职业对党派的倾向   
+- ……   
+
+### 双变量图像
+##### 地区与捐款的关系
+```{r 地区与捐款, echo=FALSE}
+#(summary(subset_NY$contbr_city))>1000
+
+#各地区捐款数是个什么情况啊
+summary(amtByCity$n)
+#quantile(amtByCity$n,0.75)
+summary(amtByCity$n>100&amtByCity$mean_amt>250)
+
+```
+   
+纽约州2290个区县，有75%的区县捐款笔数不足100，不知道是因为地区填得过于随意，还是大多数人就是没什么兴趣捐款
+捐款笔数超过100且均值超过250刀（全纽约州捐款均值为264刀）的地区共有28个
+   
+```{r, eval=FALSE, echo=FALSE}
+#散点图描绘捐款数n（x）和均值（y)
+ggplot(aes(x=n, y=mean_amt), 
+       data =subset(amtByCity, n>100&mean_amt>250)) +
+  geom_point() +
+  geom_text(aes(label=contbr_city),size =2,vjust=0,hjust=0)
+
+```
+
+Lawrence、Rands Point、Bedford Corners这几个地区捐款数并不很出众，但均值极高，猜测应该都是富人区。
+
+```{r, echo=FALSE}
+#根据建议，在散点并不是太多的时候，利用颜色区分，避免标签重叠模糊不清
+ggplot(aes(x=n, y=mean_amt,colour=contbr_city), 
+       data =subset(amtByCity,
+                    n>100&n<50000&mean_amt>250&mean_amt<500)) +
+  geom_point() 
+#+geom_text(aes(label=contbr_city),size =2,vjust=-1,hjust=0)
+```
+
+图上展示出了纽约州捐款数较多且均值较高的区域
+
+```{r, echo=FALSE}
+#根据搜索获得的纽约州主要城市及主要地区名，查看这些重点地区捐款分布情况
+#注意排除希拉里基金会的几笔大额捐款
+subset_NY_city <- subset(subset_NY, contbr_city %in% 
+                           c("NEW YORK","BROOKLYN","BRONX","ROCHESTER","STATEN ISLAND","BUFFALO","ALBANY","SYRACUSE","YONKERS","QUEENS")
+                         &contb_receipt_amt<200000)
+
+#ggplot(aes(x=contbr_city, y=contb_receipt_amt), data = subset_NY_city) +
+#  geom_boxplot()
+
+
+ggplot(aes(x=contbr_city, y=contb_receipt_amt), data = subset_NY_city) +
+  geom_boxplot() + 
+  scale_y_continuous(limits = c(0,200)) +
+  theme(axis.text.x = element_text(angle=40,hjust=1,size=8)) 
+```
+
+New York区是实打实的、毫无争议的人多又有钱。    
+
+从捐款箱线图上来看，纽约（曼哈顿区）和布鲁克林区大额捐款更多些，其它各区情况都差不多，中位数普遍持平，只有皇后区大额捐款数明显要少一些。    
+
+##### 职业和捐款之间的关系     
+```{r 职业与捐款, echo=FALSE}
+summary(amtByOccupation$n)
+summary(amtByOccupation$n>100)
+```
+   
+数据集中共有16849种职业，只有75%的类目捐款数为10以上，超过100条的有532种职业，看来职业这一记录填得还是比较散乱的。     
+```{r,eval=FALSE ,echo=FALSE}
+#尝试探索捐款较多且均值较高的职业
+ggplot(aes(x=n, y=mean_amt), 
+       data =subset(amtByOccupation, n>100)) +
+  geom_point() +
+  geom_text(aes(label=contbr_occupation),size =2,vjust=0,hjust=0)
+
+ggplot(aes(x=n, y=mean_amt), 
+       data =subset(amtByOccupation, n>100&mean_amt<10000)) +
+  geom_point() +
+  geom_text(aes(label=contbr_occupation),size =2,vjust=0,hjust=0)
+```
+
+
+```{r, echo=FALSE}
+#根据建议，在散点并不是太多的时候，利用颜色区分，避免标签重叠模糊不清
+ggplot(aes(x=n, y=mean_amt, colour=contbr_occupation), 
+       data =subset(amtByOccupation, n>100&mean_amt<10000&mean_amt>400)) +
+  geom_point() 
+#+geom_text(aes(label=contbr_occupation),size =2,vjust=0,hjust=0)
+```
+
+上图展示了捐款记录超过100条，人均超过400刀的职业，放眼望去和以下几个关键词密切相关：高管，金融，咨询，投资，银行……   
+```{r, echo=FALSE}
+
+ggplot(aes(x=reorder(contbr_occupation,sum_amt), y=sum_amt), 
+       data =subset(amtByOccupation, sum_amt>400000) ) +
+  geom_bar(stat = "identity") +
+  labs(x="Occupations", y="Donation Amount") +
+  coord_flip()
+
+```
+ 
+上图展示了纽约州捐款总量超过40万的职业
+ 
+```{r, echo=FALSE}
+#筛选典型职业
+subset_NY_occupation <- subset(subset_NY, contbr_occupation %in% 
+                                 c("RETIRED","ATTORNEY","LAWYER","NOT EMPLOYED","HOMEMAKER","CONSULTANT","CEO","PHYSICIAN","PROFESSOR","PRESIDENT",
+                                   "FINANCE","REAL ESTATE","WRITER","EXECUTIVE",
+                                   "TEACHER"))
+
+#不同职业捐款的箱线图
+#ggplot(aes(x=contbr_occupation, y=contb_receipt_amt), 
+#       data = subset_NY_occupation) +
+#  geom_boxplot()
+
+ggplot(aes(x=contbr_occupation, y=contb_receipt_amt), 
+       data = subset_NY_occupation) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle=40,hjust=1,size=8)) + 
+  scale_y_continuous(limits = c(0,1000))
+```
+     
+通过对职业与捐款情况的分析，初步可以看出以下结论:    
+- 希拉里基金会的若干条大额捐款显著拉高了职业空白的平均数据（以平均32万刀遥遥领先）;    
+- 退休人士的捐款积极性无与伦比（近10万条记录），捐款总金额也是最多的；    
+- 律师行业的捐款总额如果相加的话，实际上要比退休人士更壮观；   
+- 无业人士是个很有意思的形容，无业并不意味着没有闲钱捐款（近5万条记录），也许无业包括了相当多的自由职业；    
+- 不同职业捐款分布的区分度比地区的区分度要更大；   
+- Attorney的有钱程度似乎比Lawyer还是差一点儿，没搞明白这两者区别；   
+
+##### 候选人获得捐款的情况   
+```{r 候选人与捐款, echo=FALSE}
+#summary(subset_NY$cand_nm)
+amtByCand <- subset(subset_NY,contb_receipt_amt<20000) %>%
+  group_by(cand_nm) %>%
+  summarise(mean_amt = mean(contb_receipt_amt),
+            median_amt = median(contb_receipt_amt),
+            min_amt = min(contb_receipt_amt),
+            max_amt = max(contb_receipt_amt),
+            sum_amt = sum(contb_receipt_amt),
+            n = n())
+#候选人获得捐款总额分布
+ggplot(aes(x=reorder(cand_nm,sum_amt), y=sum_amt), data = amtByCand) +
+  geom_bar(stat="identity") +
+  coord_flip()
+
+#候选人获得捐款箱线图分布
+ggplot(aes(x=cand_nm, y=contb_receipt_amt), data = subset_NY) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle=40,hjust=1)) +
+  scale_y_continuous(limits = c(0,3000))
+
+```
+     
+希拉里基金会捐赠的23笔大额捐款实在是过于Bug，所以在统计候选人获得捐款情况时，拿掉了这些记录。   
+从结果来看，即使去掉了最大额的23笔捐款，与希拉里收获得盆满钵满相比，其他候选人的捐款情况要惨淡得多，呈现出数量级的差异。    
+从箱线图来看，希拉里获得的捐款笔数多，但是捐款中位数反倒是候选者里相对较低的一位。Jeb·Bush反倒是获得了相当多金额较大的捐款，中位数在候选人里一骑绝尘。   
+    
+##### 各候选人获得捐款分布的阶段   
+```{r 候选人捐款分布阶段, echo=FALSE}
+by(subset_NY$cand_nm, subset_NY$election_tp,summary)
+
+ggplot(aes(x=cand_nm, fill=election_tp), data = subset_NY) +
+  geom_bar(position = "dodge")+
+  theme(axis.text.x = element_text(angle=40,hjust=1))
+```
+     
+捐款整体集中在P2016（初选）G2016（普选）阶段，但并不是之前预想的在G普选阶段绝对只有希拉里和特朗普获得捐款，零星还有其它候选人获得了若干笔捐款款项。桑德斯获得的捐款确实仅集中在初选阶段。  
+特朗普在两个阶段获得的捐款数基本持平，而希拉里在普选阶段获得了比初选阶段多更多的捐款。   
+
+##### 各党派获得捐款情况
+```{r 按党派分类, echo=FALSE}
+by(subset_NY$contb_receipt_amt, subset_NY$cand_party, summary)
+
+ggplot(aes(x=cand_party, y=contb_receipt_amt), data = subset_NY) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0,500))
+```
+     
+共和党获得的捐款金额从分布上看比民主党要更高一点。
+
+### 双变量分析
+在这部分调查中观察到的比较明显的趋势：
+- 捐款积极的地区非常明显地与纽约州中重点的城市、县郡重叠，各地区间捐款数值分布情况并没有太大差异，中位数普遍持平；   
+- 退休人士、律师的捐款积极性极高，各职业捐款分布趋势差异较大，高薪职业的大额捐款相对较多，中位数参差不齐；   
+- Jeb.Bush在所有候选人中，他获得的捐款明显数额高于其他人。希拉里获得的笔数、总额都远超于其他候选人，但她获得捐款金额普遍并不偏高；   
+- 普选阶段的捐款基本集中在希拉里和特朗普两个人身上，希拉里在普选阶段获得了比初选阶段更多的捐款，特朗普在两个阶段内相对持平；   
+- 共和党获得的捐款从中位数来看，比民主党反倒更高一些；   
+
+### 多变量图像   
+##### 职业对党派的倾向
+```{r 职业与党派, echo=FALSE}
+#排除希拉里基金会的大额捐款
+amtByOccupationnParty <- subset(subset_NY,contb_receipt_amt<20000) %>%
+  group_by(contbr_occupation,cand_party) %>%
+  summarise(sum_amt = sum(contb_receipt_amt))
+
+#数据格式长转宽
+#参考资料http://www.dataguru.cn/article-12098-1.html
+
+amtByOccupationnParty <- spread(
+  data = amtByOccupationnParty,
+  key = cand_party,
+  value = sum_amt)
+
+#捐款中空值变为0
+amtByOccupationnParty[is.na(amtByOccupationnParty)] <- 0
+
+#获得各职业的两党捐款总和，并新建列
+amtByOccupationnParty$sum_amt <- amtByOccupationnParty$Democrat + 
+  amtByOccupationnParty$Republican
+
+sub_amtByOP <- subset(amtByOccupationnParty, sum_amt>1000000)
+sub_amtByOP <- sub_amtByOP[c('contbr_occupation','Democrat','Republican')]
+sub_amtByOP <- gather(
+  data = sub_amtByOP,
+  key = "Party",
+  value = "sum_amt",
+  Democrat:Republican
+)
+
+#主要职业对两党捐款总额的对比
+ggplot(aes(x=reorder(contbr_occupation, sum_amt), y=sum_amt, fill=Party), 
+       data = sub_amtByOP) +
+  geom_bar(stat = 'identity', position = 'dodge',width = 0.7) +
+  theme(panel.background = element_rect(fill = 'transparent'),
+        axis.text.x = element_text(hjust=1,size=8)) +
+  labs(x="Occupations", y="Donation Amount") +
+  coord_flip()
+
+```
+     
+在纽约州，看起来大部分职业对共和党的捐款数都远不如对民主党的捐款数。   
+
+##### 民主党两大候选人获得捐款分析   
+```{r 桑德斯与希拉里对比分析, echo=FALSE}
+
+amtByHillary <- subset(subset_NY,cand_nm %in% 
+                         c("Clinton, Hillary Rodham") &
+                         contb_receipt_amt<20000) %>%
+  group_by(contbr_occupation) %>%
+  summarise(sum_amt = sum(contb_receipt_amt),
+            n = n())
+amtBySanders <- subset(subset_NY,cand_nm %in% 
+                         c("Sanders, Bernard")) %>%
+  group_by(contbr_occupation) %>%
+  summarise(sum_amt = sum(contb_receipt_amt),
+            n = n())
+
+#希拉里获得捐款职业分布  
+ggplot(aes(x=reorder(contbr_occupation,n), y=n), 
+       data = subset(amtByHillary,n>2500)) +
+  geom_bar(stat = "identity") +
+  labs(title="Hillary",x="Occupation", y="Receipt Amount Counts") +
+  coord_flip()
+#桑德斯获得捐款职业分布
+ggplot(aes(x=reorder(contbr_occupation,n), y=n), 
+       data = subset(amtBySanders,n>1400)) +
+  geom_bar(stat = "identity") +
+  labs(title="Sanders",x="Occupation", y="Receipt Amount Counts") +
+  coord_flip()
+
+```
+     
+希拉里的主要支持者分布和总体数据集类似，但是桑德斯的捐款第一大来源是“无业人士”，且捐款笔数远高于其他职业，这很有意思。    
+
+##### 捐款人、党派获得捐款额分布
+```{r 小额、大额捐款分布, echo=FALSE}
+#按（1，10，100，1000）划分捐款数据集
+amtNumByCand <- subset_NY %>%
+  group_by(cand_nm) %>%
+  summarise(num_u1 = sum(contb_receipt_amt<=1),
+            num_1n10 = sum(contb_receipt_amt>1&contb_receipt_amt<=10),
+            num_10n100 = sum(contb_receipt_amt>10&contb_receipt_amt<=100),
+            num_100n1000 = sum(contb_receipt_amt>100&contb_receipt_amt<=1000),
+            num_o1000 = sum(contb_receipt_amt>1000),
+            counts = n())
+
+amtNumAll <- subset_NY %>%
+  summarise(num_u1 = sum(contb_receipt_amt<=1),
+            num_1n10 = sum(contb_receipt_amt>1&contb_receipt_amt<=10),
+            num_10n100 = sum(contb_receipt_amt>10&contb_receipt_amt<=100),
+            num_100n1000 = sum(contb_receipt_amt>100&contb_receipt_amt<=1000),
+            num_o1000 = sum(contb_receipt_amt>1000),
+            counts = n())
+amtNumAll$cand_nm <- "All"
+#合并数据集
+amtNumByCand <- rbind(amtNumByCand,amtNumAll)
+
+amtNumByCand$num_u1 <- (amtNumByCand$num_u1/amtNumByCand$counts)*100
+amtNumByCand$num_1n10 <- (amtNumByCand$num_1n10/amtNumByCand$counts)*100
+amtNumByCand$num_10n100 <- (amtNumByCand$num_10n100/amtNumByCand$counts)*100
+amtNumByCand$num_100n1000 <- (amtNumByCand$num_100n1000/amtNumByCand$counts)*100
+amtNumByCand$num_o1000 <- (amtNumByCand$num_o1000/amtNumByCand$counts)*100
+
+#裁掉最后一列
+amtNumByCand <- amtNumByCand[c(0:6)]
+#数据宽转长
+amtNumByCand <- gather(
+  data = amtNumByCand,
+  key = "Range",
+  value = "Ratio",
+  num_u1:num_o1000
+)
+#对捐款分组因子化并排序
+amtNumByCand$Range <- factor(amtNumByCand$Range, 
+                                levels =c("num_o1000","num_100n1000",
+                                          "num_10n100","num_1n10","num_u1"))
+
+#修改标签可以用scale_fill_discret()但是会和颜色冲突
+ggplot(aes(x=cand_nm, y=Ratio,fill=Range), data = amtNumByCand) +
+  geom_bar(stat = "identity") +
+  coord_flip()
+```
+     
+不同候选人获得的捐款组成略有差异。其中要考虑到希拉里获得的捐款比例过大，导致整体趋势和希拉里获得的捐款比例很相近。即使这样还是能看出：希拉里获得的1刀以下捐款的比例多于其它候选人；桑德斯最平民，几乎全部集中在100刀以下；Jeb.Bush最不平民，获得的数捐款都超过了1000刀。    
+
+##### 主要候选人获得捐款随时间变化趋势   
+```{r 候选人获得捐款数随时间变化, echo=FALSE}
+amtByDtnCand <- subset(subset_NY,cand_nm %in% 
+                         c("Clinton, Hillary Rodham",
+                           "Sanders, Bernard","Trump, Donald J.") &
+                         contb_receipt_amt<20000) %>%
+  group_by(contb_receipt_dt,cand_nm) %>%
+  summarise(sum_amt = sum(contb_receipt_amt))
+
+#月份缩写转换迷之有错，手动替换成不出错的好了,有可能是九月缩写不对闹的我猜
+amtByDtnCand$contb_receipt_dt <- sub("Jan","01",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Feb","02",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Mar","03",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Apr","04",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("May","05",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Jun","06",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Jul","07",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Aug","08",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Sep","09",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Oct","10",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Nov","11",amtByDtnCand$contb_receipt_dt)
+amtByDtnCand$contb_receipt_dt <- sub("Dec","12",amtByDtnCand$contb_receipt_dt)
+
+#日期格式转换
+amtByDtnCand$contb_receipt_dt <- 
+  as.Date(amtByDtnCand$contb_receipt_dt, "%d-%m-%y")
+
+#随日期候选人获得捐款情况变化
+ggplot(aes(x=contb_receipt_dt, y=sum_amt,colour=cand_nm), 
+       data = amtByDtnCand) +
+  geom_line()
+
+```
+     
+从图中可以看出候选人兴起和在竞选中退场的时间点。希拉里起步极早；桑德斯一度和希拉里在竞选资金获得的情况来看不相上下，但在惜败后退出；特朗普在党内胜出之前仿佛没什么市场。
+
+### 多变量分析   
+- 纽约州全民偏向民主党多于共和党，从这里的数据看不太出来什么职业更偏向支持共和党一方；   
+- 同为民主党的候选人，希拉里和桑德斯的支持者组成差异还是较大的。希拉里的候选人群职业与总体数据相似，桑德斯的第一大支持人群是“无业人士”，这是比较特别的一点；   
+- 希拉里相比其他候选人并不完全是高收入人群支持比例较多，从比例上讲反倒略逊于部分候选人，她获得的捐款总量之多确实是得益于热度高，获得的笔数多。从这点上来看，桑德斯是实打实的平民支持，小额捐款比例明显高于其他候选人；Jeb.Bush表现得仿佛被大笔砸钱来玩票得富家子弟（似乎确实如此）。    
+- 主要捐款人获得的捐款趋势基本吻合候选人一路走来的热度变化趋势；   
+
+### 最终成图和汇总   
+##### 图像一   
+```{r , echo=FALSE}
+#主要贡献捐款的职业对党派的偏好
+ggplot(aes(x=reorder(contbr_occupation, sum_amt), y=sum_amt, fill=Party), 
+       data = sub_amtByOP) +
+  geom_bar(stat = 'identity', position = 'dodge',width = 0.7) +
+  scale_y_continuous(breaks = c(0,2000000,4000000,6000000),
+    labels = c("0","$200M","$400M","$600M")) +
+  theme(#panel.background = element_rect(fill = 'transparent'),
+        axis.text.x = element_text(vjust=1),
+        axis.text.y = element_text(hjust=1)) +
+  labs(title="Main Donation for Each Party",
+       x="Occupations", y="Donation Amount") +
+  coord_flip()
+```
+     
+结论：在纽约州，全民偏向民主党。即使是共和党的主力贡献捐款人群，无一例外地贡献了更多的捐款给民主党。     
+
+##### 图像二   
+```{r, echo=FALSE}
+#候选人们获得捐款的分布
+ggplot(aes(x=cand_nm, y=Ratio,fill=Range), data = amtNumByCand) +
+  geom_bar(stat = "identity") +
+  scale_fill_brewer(palette="PuBu",labels=c("Over1000","100~1000",
+                                            "10~100","1~10","Under 1")) +
+  labs(title="Distribution of Donations",x="Dominate", y="Ratio") +
+  coord_flip()
+```
+      
+结论：总体来看捐款金额几乎都集中在1000美元之下，大部分捐款不超过100美元。希拉里获得的少于1美元及超过1000美元的比例都高于均值；桑德斯获得超过100美元捐款的比例明显少于其他候选人；Jeb.Bush获得的捐款中有一半都超过了1000美元，在所有候选人中一枝独秀。   
+
+##### 图像三   
+```{r, echo=FALSE}
+#随时间推移候选人获得赞助情况
+ggplot(aes(x=contb_receipt_dt, y=sum_amt), data = amtByDtnCand) +
+  geom_line(aes(colour=cand_nm)) +
+  scale_color_brewer(palette = "Set3") +
+  labs(title="Donations by Date",x="Date", 
+       y="Receipt Amounts",colour="Candidate")
+
+```
+      
+结论：希拉里从2015年就开始收到不少的捐款，党内获胜后，收获捐款的态势猛增，大选输掉后获得捐款骤停；桑德斯的捐款从2016年才开始，与希拉里获得捐款的态势在2016年不相上下；特朗普在党内胜出之后获得捐款态势才见长，最终持续到大选胜出之后；   
+
+### 反思   
+- 数据集选择了一个倾向过于明显的州，很多问题比如职业对党派的倾向性无法看出来大的趋势，应该选择一个摇摆州；    
+- 未来有时间的话，还是应该使用全国数据，可以进一步分析捐款情况和最后竞选结果之间的关系；    
+- 数据分析缺乏完整的思路，建模的思维几乎是缺失的，在项目整个过程中调整、反复了太多次，需要多加训练；
+- 收获是擅用stackoverflow解决了各式各样的小问题。
